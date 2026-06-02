@@ -1,0 +1,39 @@
+services:
+  rtac:
+    build: .
+    image: folio-libris-rtac:latest
+    # Behind the existing reverse proxy on the host: bind to localhost only, so
+    # the app is reachable through the proxy and not exposed externally. Point
+    # the proxy at http://127.0.0.1:5000.
+    ports:
+      - "127.0.0.1:5000:5000"
+    # Trust the reverse proxy's X-Forwarded-* headers.
+    command:
+      - uvicorn
+      - application:application
+      - --host
+      - "0.0.0.0"
+      - --port
+      - "5000"
+      - --proxy-headers
+      - --forwarded-allow-ips
+      - "*"
+    # Per-library settings (with FOLIO credentials) are mounted read-only,
+    # so secrets stay out of the image and can be managed on the host.
+    volumes:
+      - ./libraries:/app/libraries:ro
+    restart: unless-stopped
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:5000/').status==200 else 1)
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+    # --- If your reverse proxy itself runs in Docker ---
+    # Replace the "ports" block above with "expose: [\"5000\"]" and attach this
+    # service to the proxy's network, then target http://rtac:5000 from the proxy.

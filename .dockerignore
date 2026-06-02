@@ -1,0 +1,13 @@
+.git/
+.gitignore
+.venv/
+__pycache__/
+**/__pycache__/
+*.pyc
+.env
+.env_template
+.python-version
+.vscode/
+.platform/
+docs/
+libraries/

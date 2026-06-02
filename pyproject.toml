@@ -1,0 +1,20 @@
+[project]
+name = "folio-libris-rtac"
+version = "0.1.0"
+description = "RTAC API for the Swedish union catalog Libris, backed by FOLIO"
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+    "fastapi",
+    "uvicorn[standard]",
+    "folioclient==0.6",
+    "lxml>=4.6.3",
+]
+
+[dependency-groups]
+dev = [
+    "black",
+    "flake8",
+    "autopep8",
+    "pycodestyle",
+]

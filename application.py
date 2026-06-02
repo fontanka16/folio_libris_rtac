@@ -1,319 +1,224 @@
 import json
+import logging
 import os
-import os.path
-from datetime import date, timedelta
-from os import path
-from random import randint
-import time
-import requests
-import httpx
-import asyncio
-from flask_httpauth import HTTPBasicAuth
 
-from werkzeug.utils import header_property
-from requests_futures.sessions import FuturesSession
-from concurrent.futures import as_completed
-
-from werkzeug.datastructures import Headers
-
-from dicttoxml import dicttoxml
-from flask import Flask, Response, app, jsonify, render_template, request
+from fastapi import FastAPI, Query, Request, Response
+from fastapi.responses import JSONResponse
 from folioclient.FolioClient import FolioClient
 from lxml import etree
-from werkzeug.exceptions import HTTPException
 
-application = Flask(__name__)
-auth = HTTPBasicAuth()
+logger = logging.getLogger("rtac")
 
+application = FastAPI()
 
-@auth.verify_password
-def verify_password(username, password):
-    try:
-        folio_client = FolioClient(
-            os.environ["OKAPI_URL"],
-            os.environ["TENANT_ID"],
-            os.environ["FOLIO_USERNAME"],
-            os.environ["FOLIO_PASSWORD"],
-        )
-        login_payload = {"username": username, "password": password}
-        login_path = "/authn/login"
-        resp = requests.post(
-            folio_client.okapi_url + login_path,
-            headers=folio_client.okapi_headers,
-            data=json.dumps(login_payload),
-        )
-        return resp.status_code == 201
-    except:
-        return False
+LIBRARIES_DIR = os.environ.get("LIBRARIES_PATH") or os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "libraries"
+)
+
+ITEM_FIELDS = [
+    "Item_no",
+    "UniqueItemId",
+    "Location",
+    "Call_No",
+    "Loan_Policy",
+    "Status",
+    "Status_Date_Description",
+    "Status_Date",
+]
 
 
-def get_file_path():
-    path_debug = os.environ.get("DATA_FOLDER_PATH", "/MADE_UP")
-    path_real = "/home"
-    if os.path.exists(path_debug):
-        return os.path.join(path_debug, "stats.json")
-    if os.path.exists(path_real):
-        return os.path.join(path_real, "stats.json")
-    raise Exception("None of the paths exists")
-
-
-@application.route("/rtac", methods=["GET"])
-def rtac():
-    folio_client = FolioClient(
-        os.environ["OKAPI_URL"],
-        os.environ["TENANT_ID"],
-        os.environ["FOLIO_USERNAME"],
-        os.environ["FOLIO_PASSWORD"],
-    )
-    bib_id = request.args.get("Bib_ID")
-    onr = request.args.get("ONR")
-    issn = request.args.get("ISSN")
-    isbn = request.args.get("ISBN")
-    resp = create_rtac_response(folio_client, bib_id)
-    if not bib_id:
-        raise ValueError("bib id missing. other identifiers not yet implemented")
-
-    root = etree.Element("Item_Information")
-    for itemd in resp:
-        item = etree.fromstring(itemd)
-        root.append(item)
-    return Response(etree.tostring(root), mimetype="text/xml")
-
-
-@application.route("/")
-def hello_world():
-    return "RTAC  and statistics app from FOLIO"
-
-
-@application.route("/statistics/")
-@application.route("/statistics/<date>")
-@auth.login_required
-def hi(date=date.today()):
-    definitions = []
-    with open("stats_definitions.json") as jf:
-        definitions = json.load(jf)
-    names = [f["name"] for f in definitions]
-    names.sort()
-    return render_template(
-        "stats_main.html",
-        date=date,
-        measures=names,
-        seven_days_back=date.today() - timedelta(days=7),
-        thirty_days_back=date.today() - timedelta(days=30),
+def available_sigels():
+    """Return the configured library sigels (sub-dirs holding a settings.json)."""
+    if not os.path.isdir(LIBRARIES_DIR):
+        return []
+    return sorted(
+        name
+        for name in os.listdir(LIBRARIES_DIR)
+        if os.path.isfile(os.path.join(LIBRARIES_DIR, name, "settings.json"))
     )
 
 
-@application.route("/reset")
-@auth.login_required
-def reset():
-    saved_stats = {}
-    with open(get_file_path(), "w+") as f:
-        f.write(json.dumps(saved_stats))
-    return "reset"
+def load_settings(sigel):
+    """Load settings.json for a library sigel.
+
+    The sigel is validated against the configured libraries, which also guards
+    against path traversal: an unknown or malicious sigel is never in the list.
+    """
+    if sigel not in available_sigels():
+        raise FileNotFoundError("Unknown library sigel: {}".format(sigel))
+    path = os.path.join(LIBRARIES_DIR, sigel, "settings.json")
+    with open(path, encoding="utf-8") as f:
+        return json.load(f)
 
 
-@application.route("/ninety")
-def create_90():
-
-    folio_client = get_folio_client()
-    saved_stats = {}
-    with open(get_file_path(), "r") as f:
-        saved_stats = json.load(f)
-    i = 0
-    for d in range(1, 90):
-        cd = date.today() - timedelta(days=d)
-        if str(cd) not in saved_stats:
-            i += 1
-            saved_stats[str(cd)] = get_date_data(cd, folio_client)
-            with open(get_file_path(), "w+") as f:
-                f.write(json.dumps(saved_stats))
-            if i > 7:
-                break
-    return "done"
-
-
-def get_folio_client():
+def get_folio_client(settings):
     return FolioClient(
-        os.environ["OKAPI_URL"],
-        os.environ["TENANT_ID"],
-        os.environ["FOLIO_USERNAME"],
-        os.environ["FOLIO_PASSWORD"],
+        settings["okapi_url"],
+        settings["tenant_id"],
+        settings["username"],
+        settings["password"],
     )
 
 
-@application.route("/seven")
-def create_7():
-    saved_stats = {}
-    folio_client = get_folio_client()
-    with open(get_file_path(), "r") as f:
-        saved_stats = json.load(f)
-    for d in range(1, 7):
-        cd = date.today() - timedelta(days=d)
-        if str(cd) not in saved_stats:
-            saved_stats[str(cd)] = get_date_data(cd, folio_client)
-            with open(get_file_path(), "w+") as f:
-                f.write(json.dumps(saved_stats))
-    return "done"
+def append_item(root, values):
+    """Append an <Item> element with the standard RTAC fields to `root`."""
+    item = etree.SubElement(root, "Item")
+    for tag in ITEM_FIELDS:
+        value = values.get(tag, "")
+        etree.SubElement(item, tag).text = "" if value is None else str(value)
+    return item
 
 
-@application.route("/status")
-@auth.login_required
-def get_status():
-    saved_stats = {}
-    folio_client = get_folio_client()
-    if not path.exists(get_file_path()):
-        with open(get_file_path(), "w+") as f:
-            f.write(json.dumps(saved_stats))
-    with open(get_file_path(), "r") as f:
-        saved_stats = json.load(f)
-    yesterday = date.today() - timedelta(days=1)
-    if str(yesterday) not in saved_stats:
-        saved_stats[str(yesterday)] = get_date_data(yesterday, folio_client)
-        with open(get_file_path(), "w+") as f:
-            f.write(json.dumps(saved_stats))
-    return jsonify(list(saved_stats.values()))
+def holding_values(holding):
+    return {
+        "Item_no": "1",
+        "UniqueItemId": holding.get("id", ""),
+        "Location": holding.get("location", ""),
+        "Call_No": holding.get("callNumber", ""),
+        "Loan_Policy": "",
+        "Status": holding.get("status", ""),
+        "Status_Date_Description": "",
+        "Status_Date": holding.get("dueDate", "")[:10],
+    }
 
 
-@application.route("/status2")
-def get_status2():
-    saved_stats = {}
-    folio_client = get_folio_client()
-    if not path.exists(get_file_path()):
-        with open(get_file_path(), "w+") as f:
-            f.write(json.dumps(saved_stats))
-    with open(get_file_path(), "r") as f:
-        saved_stats = json.load(f)
-    yesterday = date.today() - timedelta(days=1)
-    if str(yesterday) not in saved_stats:
-        saved_stats[str(yesterday)] = get_date_data(yesterday, folio_client)
-        with open(get_file_path(), "w+") as f:
-            f.write(json.dumps(saved_stats))
-    return "done"
+def empty_item_information():
+    """Build an <Item_Information> document with a single 'Okänd' placeholder."""
+    root = etree.Element("Item_Information")
+    append_item(root, {"Status": "Okänd"})
+    return root
 
 
-@application.route("/today")
-def get_today():
-    saved_stats = {}
-    folio_client = get_folio_client()
-    if not path.exists(get_file_path()):
-        with open(get_file_path(), "w+") as f:
-            f.write(json.dumps(saved_stats))
-    with open(get_file_path(), "r") as f:
-        saved_stats = json.load(f)
-    yesterday = date.today() - timedelta(days=1)
-    if str(yesterday) not in saved_stats:
-        saved_stats[str(yesterday)] = get_date_data(yesterday, folio_client)
-        with open(get_file_path(), "w+") as f:
-            f.write(json.dumps(saved_stats))
-    saved_stats[str(date.today())] = get_date_data(date.today(), folio_client)
-    return jsonify(list(saved_stats.values()))
+def _type_id_list(configured):
+    """Normalise a configured identifier-type UUID setting to a list.
+
+    Accepts a list of UUIDs, a single UUID string, or a comma-separated string.
+    Missing/empty values (and empty entries) yield an empty list.
+    """
+    if not configured:
+        return []
+    if isinstance(configured, str):
+        configured = configured.split(",")
+    return [str(type_id).strip() for type_id in configured if str(type_id).strip()]
 
 
-def get_date_data(date, folio_client: FolioClient):
-    tomorrow = date + timedelta(days=1)
-    definitions = []
-    with open("stats_definitions.json") as jf:
-        definitions = json.load(jf)
-    res = {"date": str(date)}
-    session = FuturesSession()
-    futures = []
-    for idx, defi in enumerate(definitions):
-        date_q = date if defi["when"] == "today" else tomorrow
-        path = defi["path"].format(date_q)
-        try:
-            url = folio_client.okapi_url + path
-            future = session.get(url, headers=folio_client.okapi_headers)
-            future.idx = idx
-            future.path = path
-            future.namet = defi["name"]
-            future.tic = time.perf_counter()
-            futures.append(future)
-        except Exception as ee:
-            raise ee
+def build_identifier_query(identifiers, identifier_type_ids):
+    """Build the CQL instance query from the supplied identifier values.
 
-    for idx, future in enumerate(as_completed(futures)):
-        toc = time.perf_counter()
-        resp = future.result()
-        res[future.namet] = resp.json()["totalRecords"]
-    return res
+    `identifiers` maps a query-parameter name (Bib_ID, ONR, ISSN, ISBN) to its
+    value. `identifier_type_ids` maps the same names to the library's
+    identifier-type UUID(s) — a list, a single UUID string, or a comma-separated
+    string. For each value that is set, one OR-clause is added per configured
+    UUID; values without any configured UUID are skipped. Returns None when no
+    clause could be built.
+    """
+    clauses = []
+    for name, value in identifiers.items():
+        if not value:
+            continue
+        for type_id in _type_id_list(identifier_type_ids.get(name)):
+            clauses.append(
+                'identifiers=/@value/@identifierTypeId="{}" "{}"'.format(type_id, value)
+            )
+    if not clauses:
+        return None
+    return "?query=(" + " or ".join(clauses) + ")"
 
 
-@application.route("/totals")
-def get_totals():
-    folio_client = FolioClient(
-        os.environ["OKAPI_URL"],
-        os.environ["TENANT_ID"],
-        os.environ["FOLIO_USERNAME"],
-        os.environ["FOLIO_PASSWORD"],
-    )
-    loans_path = "/circulation/loans?limit=0"
-    requests_path = "/circulation/requests?limit=0"
-    users_path = "/users?limit=0"
-    instances_path = "/instance-storage/instances?limit=0"
-    holdings_path = "/holdings-storage/holdings?limit=0"
-    items_path = "/item-storage/items?limit=0"
-    return jsonify(
-        {
-            "total_users": folio_client.folio_get_single_object(users_path)[
-                "totalRecords"
-            ],
-            "total_loans": folio_client.folio_get_single_object(loans_path)[
-                "totalRecords"
-            ],
-            "total_requests": folio_client.folio_get_single_object(requests_path)[
-                "totalRecords"
-            ],
-            "total_instances": folio_client.folio_get_single_object(instances_path)[
-                "totalRecords"
-            ],
-            "total_holdings": folio_client.folio_get_single_object(holdings_path)[
-                "totalRecords"
-            ],
-            "total_items": folio_client.folio_get_single_object(items_path)[
-                "totalRecords"
-            ],
-        }
-    )
+def create_rtac_response(folio_client, query):
+    """Return the holdings for the first matching instance.
 
-
-@application.errorhandler(Exception)
-def handle_error(e):
-    if "/rtac" in request.url:
-        empty = {
-            "Item": {
-                "Item_no": None,
-                "UniqueItemId": None,
-                "Location": None,
-                "Call_No": None,
-                "Loan_Policy": None,
-                "Status": "Okänd",
-                "Status_Date_Description": None,
-                "Status_Date": None,
-            }
-        }
-        empty_root = dicttoxml(empty, custom_root="Item_Information", attr_type=False)
-        return Response(empty_root, mimetype="text/xml")
-    return jsonify(error=str(e))
-
-
-def create_rtac_response(folio_client, bib_id):
-    query = '?query=(identifiers=/@value/@identifierTypeId="4f3c4c2c-8b04-4b54-9129-f732f1eb3e14" "{}" or identifiers=/@value/@identifierTypeId="28c170c6-3194-4cff-bfb2-ee9525205cf7" "{}")'
-    path = "/instance-storage/instances"
-    q = query.format(bib_id, bib_id)
-    print(f"looking for instances with Libris ids: {q}")
-    instances = folio_client.folio_get(path, "instances", q)
+    Uses folio_get_single_object (which, unlike folio_get, does not treat an
+    empty result list as an error) so that "no matching instance" and "instance
+    with no holdings" return an empty list instead of raising.
+    """
+    search = folio_client.folio_get_single_object("/instance-storage/instances" + query)
+    instances = search.get("instances", [])
+    if not instances:
+        return []
     instance_id = instances[0]["id"]
-    holdings = folio_client.folio_get("/rtac/{}".format(instance_id), "holdings")
-    for i, holding in enumerate(holdings):
-        date = holding.get("dueDate", "")[:10]
-        my_dict = {
-            "Item_no": 1,
-            "UniqueItemId": holding.get("id", ""),
-            "Location": holding.get("location", ""),
-            "Call_No": holding.get("callNumber", ""),
-            "Loan_Policy": "",
-            "Status": holding.get("status", ""),
-            "Status_Date_Description": None,
-            "Status_Date": date,
-        }
-        yield dicttoxml(my_dict, custom_root="Item", attr_type=False)
+    rtac = folio_client.folio_get_single_object("/rtac/{}".format(instance_id))
+    return rtac.get("holdings", [])
+
+
+@application.get("/")
+def index():
+    return {"app": "RTAC app from FOLIO", "libraries": available_sigels()}
+
+
+@application.get("/{sigel}/rtac")
+def rtac(
+    sigel: str,
+    Bib_ID: str = Query(None),
+    ONR: str = Query(None),
+    ISSN: str = Query(None),
+    ISBN: str = Query(None),
+):
+    settings = load_settings(sigel)
+    query = build_identifier_query(
+        {"Bib_ID": Bib_ID, "ONR": ONR, "ISSN": ISSN, "ISBN": ISBN},
+        settings.get("identifier_type_ids", {}),
+    )
+    if query is None:
+        raise ValueError(
+            "No searchable identifier provided (a value with a configured UUID)."
+        )
+
+    folio_client = get_folio_client(settings)
+    holdings = create_rtac_response(folio_client, query)
+    if not holdings:
+        root = empty_item_information()
+    else:
+        root = etree.Element("Item_Information")
+        for holding in holdings:
+            append_item(root, holding_values(holding))
+    return Response(etree.tostring(root), media_type="text/xml")
+
+
+@application.get("/{sigel}/validate-folio-connection")
+def validate_folio_connection(sigel: str):
+    if sigel not in available_sigels():
+        return JSONResponse(
+            {"status": "error", "detail": "Unknown library sigel: {}".format(sigel)},
+            status_code=404,
+        )
+    settings = load_settings(sigel)
+    required = ["okapi_url", "tenant_id", "username", "password"]
+    missing = [key for key in required if not settings.get(key)]
+    if missing:
+        return JSONResponse(
+            {"status": "error", "detail": "Missing settings: " + ", ".join(missing)},
+            status_code=503,
+        )
+    try:
+        folio_client = get_folio_client(settings)
+    except Exception as e:
+        logger.error(
+            "FOLIO connection validation failed for %s: %s", sigel, e, exc_info=e
+        )
+        return JSONResponse(
+            {"status": "error", "detail": "Could not connect to FOLIO: {}".format(e)},
+            status_code=502,
+        )
+    return {
+        "status": "ok",
+        "sigel": sigel,
+        "okapi_url": folio_client.okapi_url,
+        "tenant": folio_client.tenant_id,
+    }
+
+
+@application.exception_handler(Exception)
+def handle_error(request: Request, e: Exception):
+    logger.error("Error while serving %s: %s", request.url, e, exc_info=e)
+    if request.url.path.endswith("/rtac"):
+        return Response(
+            etree.tostring(empty_item_information()), media_type="text/xml"
+        )
+    return JSONResponse({"error": str(e)}, status_code=500)
+
+
+if __name__ == "__main__":
+    import uvicorn
+
+    uvicorn.run("application:application", host="0.0.0.0", port=5000)

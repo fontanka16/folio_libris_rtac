@@ -3,3 +3,11 @@ static/node_modules/
 .env
 .vscode/
 static/package-lock.json
+
+# Python / uv
+.venv/
+__pycache__/
+*.pyc
+
+# Per-library settings (contain FOLIO credentials); keep the template/README
+libraries/*/

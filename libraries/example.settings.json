@@ -1,0 +1,12 @@
+{
+    "okapi_url": "https://some-okapi-url",
+    "tenant_id": "tenant-id-goes-here",
+    "username": "folio-user-name",
+    "password": "password-goes-here",
+    "identifier_type_ids": {
+        "Bib_ID": [],
+        "ONR": [],
+        "ISSN": [],
+        "ISBN": []
+    }
+}

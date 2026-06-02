@@ -1,19 +1,17 @@
-# folio_stats
+# FOLIO LIBRIS RTAC
 
-Collects and displays various indicators in a FOLIO Instance. Indicators are configurable and the tenant in focus can be changed using the environment variables see the .env_temp file
-
-![screen shot of stats](docs/chalmers_stats.png)
-
-Also acts as a RTAC API for the Swedish union catalog Libris. The following screen cast shows the RTAC response displayed in Librs
+acts as a RTAC API for the Swedish union catalog Libris. The following screen cast shows the RTAC response displayed in Librs
 ![screen shot of RTAC](docs/libris_rtac.gif)
 
 # Configuring indicators
 TBA
 
 # Installation
-Make sure you have Python >= 3.7 installed together with Flask
+This project uses [uv](https://docs.astral.sh/uv/) for dependency management.
+- Install uv (see the link above).
 - Clone the repository
-- Rename the .env_temp file to .env and fill in the proper values for the tenant. 
+- Run `uv sync` to create the virtual environment and install dependencies. uv will pick the Python version from `.python-version` (3.12).
+- Configure one or more libraries. Each library is identified by its *sigel* and configured in `libraries/<sigel>/settings.json` — copy `libraries/example.settings.json` to `libraries/<sigel>/settings.json` and fill in the FOLIO connection and identifier-type UUIDs. See [libraries/README.md](libraries/README.md).
 - Make sure the FOLIO user has valid permissions.Below is a good start:
 ```
 {
@@ -39,6 +37,7 @@ Make sure you have Python >= 3.7 installed together with Flask
   "totalRecords": 17
 }
 ```   
-- run Flask using ```pipenv run flask run``` or your do it your way.
-- point your browser to http://127.0.0.1:5000/statistics/. After a couple of seconds, you should now see a Graph.
-- to load more history, point your browser to http://127.0.0.1:5000/ninety. This will load seven more days of history into the solution for every time you make the request.
+- run the app with `uv run uvicorn application:application --reload --port 5000` (or `uv run python application.py`).
+- every endpoint is scoped to a library sigel as the first path segment. The RTAC endpoint is available at http://127.0.0.1:5000/<sigel>/rtac?Bib_ID=<libris-id> (also accepts `ONR`, `ISSN`, `ISBN`) and returns an XML response.
+- check a library's FOLIO connection at http://127.0.0.1:5000/<sigel>/validate-folio-connection (200 if it can log in, 404 for an unknown sigel, 503 if settings are missing, 502 if FOLIO is unreachable).
+- the list of configured sigels is at http://127.0.0.1:5000/ and interactive API docs at http://127.0.0.1:5000/docs.

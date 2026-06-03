@@ -31,6 +31,8 @@ def test_index_serves_html_landing_page(client, libraries_dir, settings):
     # the source code for self-hosting.
     assert application.HOSTED_SERVICE_URL in body
     assert application.SOURCE_CODE_URL in body
+    # Links to the interactive API docs.
+    assert 'href="/docs"' in body
     # Lists the configured sigels.
     assert "alpha" in body and "beta" in body
     # No template placeholders left unsubstituted.

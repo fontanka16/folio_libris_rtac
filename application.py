@@ -392,6 +392,13 @@ _INDEX_PAGE = """<!DOCTYPE html>
     (även <code>ONR</code>, <code>ISSN</code> och <code>ISBN</code> fungerar).
   </p>
 
+  <h2>API-dokumentation</h2>
+  <p>
+    Interaktiv API-dokumentation finns på <a href="/docs">/docs</a> (Swagger UI)
+    och <a href="/redoc">/redoc</a> (ReDoc). Det maskinläsbara OpenAPI-schemat
+    ligger på <a href="/openapi.json">/openapi.json</a>.
+  </p>
+
 __LIBRARIES__
   <h2>Testa eller få tjänsten driftad</h2>
   <p>

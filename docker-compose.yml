@@ -1,12 +1,19 @@
+name: folio_libris_rtac
+
 services:
   rtac:
     build: .
     image: folio-libris-rtac:latest
-    # Behind the existing reverse proxy on the host: bind to localhost only, so
-    # the app is reachable through the proxy and not exposed externally. Point
-    # the proxy at http://127.0.0.1:5000.
+    container_name: rtac
+    # Fronted by the shared `edge` Caddy container (separate stack). Caddy joins
+    # this stack's `proxy` network and reverse-proxies to http://rtac:5000 by
+    # container name — that, not a host port, is how requests reach the app.
+    # The localhost publish below is only for host-side debugging (curl on the
+    # box); drop it if you don't want the app reachable on the host at all.
     ports:
       - "127.0.0.1:5000:5000"
+    networks:
+      - proxy
     # Trust the reverse proxy's X-Forwarded-* headers.
     command:
       - uvicorn
@@ -40,6 +47,10 @@ services:
       retries: 3
       start_period: 10s
 
-    # --- If your reverse proxy itself runs in Docker ---
-    # Replace the "ports" block above with "expose: [\"5000\"]" and attach this
-    # service to the proxy's network, then target http://rtac:5000 from the proxy.
+networks:
+  # Docker names this `folio_libris_rtac_proxy` (project name + `_proxy`). The
+  # edge Caddy stack joins it as an external network to reach the `rtac`
+  # container. Keep the project name (top of file) stable so the name matches
+  # what edge/docker-compose.yml references.
+  proxy:
+    driver: bridge

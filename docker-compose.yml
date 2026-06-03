@@ -23,6 +23,12 @@ services:
     volumes:
       - ./libraries:/app/libraries:ro
     restart: unless-stopped
+    # Cap resources so a flood of requests can't exhaust the host.
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 512M
     healthcheck:
       test:
         - CMD

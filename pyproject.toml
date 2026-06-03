@@ -3,11 +3,11 @@ name = "folio-libris-rtac"
 version = "0.1.0"
 description = "RTAC API for the Swedish union catalog Libris, backed by FOLIO"
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 dependencies = [
     "fastapi",
     "uvicorn[standard]",
-    "folioclient==0.6",
+    "folioclient>=1.0.8",
     "lxml>=4.6.3",
 ]
 
@@ -17,4 +17,11 @@ dev = [
     "flake8",
     "autopep8",
     "pycodestyle",
+    "pytest>=8.4.2",
+    "httpx>=0.28.1",
 ]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "-ra"

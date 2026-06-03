@@ -19,5 +19,11 @@ COPY application.py ./
 # at runtime (see docker-compose.yml) or override with LIBRARIES_PATH.
 
 ENV PATH="/app/.venv/bin:$PATH"
+
+# Drop privileges: run as a non-root user. (Mounted libraries/<sigel>/settings.json
+# must be readable by this user — e.g. world-readable, the default for new files.)
+RUN useradd --create-home --uid 10001 appuser
+USER appuser
+
 EXPOSE 5000
 CMD ["uvicorn", "application:application", "--host", "0.0.0.0", "--port", "5000"]

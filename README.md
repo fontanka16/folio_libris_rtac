@@ -22,13 +22,13 @@ see [Libris lånestatus 2025 (PDF)](https://www.kb.se/download/18.53200c43197394
   FOLIO's `instance-storage/instances`, using the per-library FOLIO
   *identifier-type* UUIDs configured for that parameter.
 - **Availability.** For the first matching instance the service fetches holdings
-  from FOLIO's **edge-rtac** `getInstanceRtac` when the library has `edge_rtac_url`
-  configured (authenticated with its okapi token — no edge API key; the
-  `full_periodicals`/`lang` settings map to that API's query parameters),
-  otherwise from **mod-rtac**'s `GET /rtac/{id}` via the gateway (the fallback
-  for environments without edge-rtac, e.g. the FOLIO reference environments).
-  The holdings are mapped into the RTAC `<Item_Information>` XML document
-  (location, call number, status, due date …).
+  from one of three FOLIO backends, selected per library via `rtac_backend`:
+  `"rtac-cache"` (mod-rtac-cache via the gateway — okapi token, includes loan
+  type), `"edge"` (edge-rtac via the edge service — needs a per-library apiKey,
+  includes loan type), or `"rtac"` (default; mod-rtac via the gateway —
+  deprecated and without loan type). The holdings are mapped into the RTAC
+  `<Item_Information>` XML document (location, call number, loan policy, status,
+  due date …).
 - **Always answers.** When nothing matches — or FOLIO errors — it returns a
   valid XML document with a single `Okänd` ("Unknown") placeholder item rather
   than an error, so Libris always gets a well-formed response.

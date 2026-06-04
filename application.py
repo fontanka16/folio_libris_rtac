@@ -315,24 +315,16 @@ def build_identifier_query(identifiers, identifier_type_ids):
     return "?query=(" + " or ".join(clauses) + ")"
 
 
-# Global fallback edge-rtac base URL, used when a library's settings omit
-# "edge_rtac_url". edge-rtac is reached with the FolioClient's okapi token
-# (x-okapi-* headers) — no edge API key is required (apiKey is optional in the
-# edge-rtac spec).
+# Global fallbacks for the edge-rtac backend, used when a library's settings
+# omit them. edge-rtac needs an edge API key to return data (with only an okapi
+# token it answers 200 but with empty holdings), so the key is required there.
 EDGE_RTAC_URL = os.environ.get("EDGE_RTAC_URL")
+EDGE_RTAC_API_KEY = os.environ.get("EDGE_RTAC_API_KEY")
 
-
-def _edge_rtac_headers(folio_client):
-    """okapi headers that let edge-rtac authenticate as our FOLIO user.
-
-    x-okapi-url tells edge-rtac which FOLIO gateway to call internally.
-    """
-    return {
-        "x-okapi-token": folio_client.okapi_token,
-        "x-okapi-tenant": folio_client.tenant_id,
-        "x-okapi-url": folio_client.gateway_url,
-        "accept": "application/json",
-    }
+# How a library's holdings are fetched once the instance is resolved. Selected
+# per library via the "rtac_backend" setting; see create_rtac_response.
+RTAC_BACKENDS = ("rtac-cache", "edge", "rtac")
+DEFAULT_RTAC_BACKEND = "rtac"
 
 
 def _edge_rtac_request(edge_url, instance_id, params, headers):
@@ -348,41 +340,65 @@ def _edge_rtac_request(edge_url, instance_id, params, headers):
     return response.json()
 
 
+def _edge_rtac_holdings(settings, instance_id):
+    """edge-rtac getInstanceRtac via the edge service, authenticated by apiKey.
+
+    The apiKey already encodes tenant + user, so no okapi headers are needed.
+    """
+    edge_url = settings.get("edge_rtac_url") or EDGE_RTAC_URL
+    api_key = settings.get("edge_rtac_api_key") or EDGE_RTAC_API_KEY
+    if not edge_url or not api_key:
+        raise RuntimeError(
+            "edge backend needs edge_rtac_url and edge_rtac_api_key "
+            "(per-library settings or EDGE_RTAC_URL/EDGE_RTAC_API_KEY env)."
+        )
+    params = {
+        "fullPeriodicals": "true" if settings.get("full_periodicals") else "false"
+    }
+    lang = settings.get("lang")
+    if lang:
+        params["lang"] = lang
+    headers = {"Authorization": api_key, "Accept": "application/json"}
+    return _edge_rtac_request(edge_url, instance_id, params, headers)
+
+
 def create_rtac_response(folio_client, settings, query):
     """Return the holdings for the first matching instance.
 
     The instance is resolved with FolioClient (folio_get_single_object, which
     unlike folio_get does not treat an empty result list as an error, so "no
-    matching instance" yields an empty list).
+    matching instance" yields an empty list). Holdings are then fetched from one
+    of three backends, chosen per library via the ``rtac_backend`` setting:
 
-    Holdings come from one of two backends, chosen per library:
+    * ``"rtac-cache"`` — mod-rtac-cache ``GET /rtac-cache/{id}`` via the gateway
+      (okapi token, no apiKey). Rich response incl. ``permanentLoanType``.
+    * ``"edge"`` — edge-rtac ``getInstanceRtac`` via the edge service,
+      authenticated with the per-library ``edge_rtac_api_key`` (an okapi token
+      alone returns empty holdings there). Also rich; ``full_periodicals``/
+      ``lang`` map to its query parameters.
+    * ``"rtac"`` (default) — mod-rtac ``GET /rtac/{id}`` via the gateway. Always
+      available but deprecated and lean (no loan type).
 
-    * If ``edge_rtac_url`` (or the ``EDGE_RTAC_URL`` env) is set, FOLIO's
-      edge-rtac ``getInstanceRtac`` is used, authenticated with the FolioClient's
-      okapi token (no edge API key). The per-library ``full_periodicals`` and
-      ``lang`` settings map to the ``fullPeriodicals``/``lang`` query parameters.
-    * Otherwise it falls back to mod-rtac's ``GET /rtac/{id}`` via the gateway
-      (deprecated, but the only rtac available in environments where edge-rtac
-      is not deployed — e.g. the FOLIO reference environments).
+    All three return a ``{"holdings": [...]}`` envelope.
     """
     search = folio_client.folio_get_single_object("/instance-storage/instances" + query)
     instances = search.get("instances", [])
     if not instances:
         return []
     instance_id = instances[0]["id"]
-    edge_url = settings.get("edge_rtac_url") or EDGE_RTAC_URL
-    if edge_url:
-        params = {
-            "fullPeriodicals": "true" if settings.get("full_periodicals") else "false"
-        }
-        lang = settings.get("lang")
-        if lang:
-            params["lang"] = lang
-        rtac = _edge_rtac_request(
-            edge_url, instance_id, params, _edge_rtac_headers(folio_client)
-        )
-    else:
+    backend = (settings.get("rtac_backend") or DEFAULT_RTAC_BACKEND).strip().lower()
+    if backend == "rtac-cache":
+        rtac = folio_client.folio_get_single_object("/rtac-cache/{}".format(instance_id))
+    elif backend == "edge":
+        rtac = _edge_rtac_holdings(settings, instance_id)
+    elif backend == "rtac":
         rtac = folio_client.folio_get_single_object("/rtac/{}".format(instance_id))
+    else:
+        raise RuntimeError(
+            "Unknown rtac_backend {!r}; expected one of {}".format(
+                backend, ", ".join(RTAC_BACKENDS)
+            )
+        )
     return rtac.get("holdings", [])
 
 
@@ -485,12 +501,12 @@ _INDEX_PAGE = """<!DOCTYPE html>
   </p>
   <p>
     Bakom kulisserna slår tjänsten upp instansen i FOLIO
-    (<code>instance-storage</code>) och hämtar sedan beståndet. Finns
-    <strong>edge-rtac</strong> i miljön används dess <code>getInstanceRtac</code>,
-    autentiserat med bibliotekets okapi-token (ingen separat API-nyckel) — och då
-    kan biblioteket själv styra <code>fullPeriodicals</code> och <code>lang</code>
-    via sina inställningar. Saknas edge-rtac faller tjänsten tillbaka på mod-rtac
-    (<code>/rtac/{instanceId}</code>) via gatewayen.
+    (<code>instance-storage</code>) och hämtar sedan beståndet via det FOLIO-API
+    biblioteket valt (<code>rtac_backend</code>): <strong>mod-rtac-cache</strong>
+    eller <strong>edge-rtac</strong> (båda ger lånestatus/loan type), eller
+    <strong>mod-rtac</strong> via gatewayen (alltid tillgänglig, men utan loan
+    type). För edge-rtac styr biblioteket även <code>fullPeriodicals</code> och
+    <code>lang</code>.
   </p>
 
   <h2>Så ansluter ert bibliotek</h2>

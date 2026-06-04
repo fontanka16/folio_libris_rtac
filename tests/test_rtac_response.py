@@ -1,9 +1,11 @@
 """Tests for create_rtac_response against a fake FolioClient.
 
 create_rtac_response resolves the instance via FolioClient, then fetches holdings
-from edge-rtac (when ``edge_rtac_url`` is set) or falls back to mod-rtac's
-``/rtac/{id}`` via the gateway. ``{}`` settings exercise the mod-rtac fallback.
+from the backend chosen by ``rtac_backend``: ``"rtac-cache"`` / ``"edge"`` /
+``"rtac"`` (default). ``{}`` settings exercise the default mod-rtac backend.
 """
+
+import pytest
 
 import application
 from application import create_rtac_response
@@ -50,10 +52,26 @@ def test_instance_without_holdings_returns_empty():
     assert create_rtac_response(fake, {}, "?query=(x)") == []
 
 
-# --- edge-rtac (edge_rtac_url configured) -----------------------------------
+# --- rtac-cache backend -----------------------------------------------------
 
 
-def test_edge_rtac_used_when_url_configured(monkeypatch):
+def test_rtac_cache_backend_uses_gateway_path():
+    fake = FakeFolioClient(
+        responses={
+            "/instance-storage/instances": {"instances": [{"id": "i1"}]},
+            "/rtac-cache/": {"holdings": [{"id": "h1", "permanentLoanType": "Can circulate"}]},
+        }
+    )
+    holdings = create_rtac_response(fake, {"rtac_backend": "rtac-cache"}, "?query=(x)")
+    assert holdings == [{"id": "h1", "permanentLoanType": "Can circulate"}]
+    # Resolved via the gateway (okapi token) — search then /rtac-cache/{id}.
+    assert fake.calls == ["/instance-storage/instances?query=(x)", "/rtac-cache/i1"]
+
+
+# --- edge backend (rtac_backend="edge", apiKey auth) ------------------------
+
+
+def test_edge_backend_uses_apikey_and_maps_params(monkeypatch):
     fake = FakeFolioClient(
         responses={"/instance-storage/instances": {"instances": [{"id": "i1"}]}}
     )
@@ -67,51 +85,71 @@ def test_edge_rtac_used_when_url_configured(monkeypatch):
 
     monkeypatch.setattr(application, "_edge_rtac_request", fake_edge)
     settings = {
+        "rtac_backend": "edge",
         "edge_rtac_url": "https://edge.example/",
+        "edge_rtac_api_key": "KEY123",
         "full_periodicals": True,
         "lang": "sv",
     }
     holdings = create_rtac_response(fake, settings, "?query=(x)")
 
     assert holdings == [{"id": "h1"}]
-    # Instance search via FolioClient; holdings via edge — no mod-rtac /rtac/ call.
+    # Search via FolioClient; holdings via edge — no gateway /rtac call.
     assert fake.calls == ["/instance-storage/instances?query=(x)"]
     assert captured["edge_url"] == "https://edge.example/"
     assert captured["instance_id"] == "i1"
     assert captured["params"] == {"fullPeriodicals": "true", "lang": "sv"}
-    assert captured["headers"]["x-okapi-token"] == fake.okapi_token
-    assert captured["headers"]["x-okapi-tenant"] == fake.tenant_id
-    assert captured["headers"]["x-okapi-url"] == fake.gateway_url
+    # Authenticated by apiKey (Authorization header) — no okapi headers.
+    assert captured["headers"]["Authorization"] == "KEY123"
+    assert "x-okapi-token" not in captured["headers"]
 
 
-def test_edge_rtac_defaults_full_periodicals_false_and_omits_lang(monkeypatch):
+def test_edge_backend_defaults_full_periodicals_false_and_omits_lang(monkeypatch):
     fake = FakeFolioClient(
         responses={"/instance-storage/instances": {"instances": [{"id": "i1"}]}}
     )
     captured = {}
-
-    def fake_edge(edge_url, instance_id, params, headers):
-        captured["params"] = params
-        return {"holdings": []}
-
-    monkeypatch.setattr(application, "_edge_rtac_request", fake_edge)
-    create_rtac_response(fake, {"edge_rtac_url": "https://edge.example"}, "?query=(x)")
+    monkeypatch.setattr(
+        application, "_edge_rtac_request",
+        lambda u, i, params, h: captured.update(params=params) or {"holdings": []},
+    )
+    create_rtac_response(
+        fake,
+        {"rtac_backend": "edge", "edge_rtac_url": "https://e", "edge_rtac_api_key": "K"},
+        "?query=(x)",
+    )
     assert captured["params"] == {"fullPeriodicals": "false"}  # no lang key
 
 
-def test_edge_rtac_url_from_env_when_settings_omit_it(monkeypatch):
+def test_edge_backend_uses_env_fallbacks(monkeypatch):
     fake = FakeFolioClient(
         responses={"/instance-storage/instances": {"instances": [{"id": "i1"}]}}
     )
     captured = {}
-
-    def fake_edge(edge_url, instance_id, params, headers):
-        captured["edge_url"] = edge_url
-        return {"holdings": [{"id": "h9"}]}
-
     monkeypatch.setattr(application, "EDGE_RTAC_URL", "https://env-edge.example")
-    monkeypatch.setattr(application, "_edge_rtac_request", fake_edge)
-    holdings = create_rtac_response(fake, {}, "?query=(x)")
-    assert holdings == [{"id": "h9"}]
+    monkeypatch.setattr(application, "EDGE_RTAC_API_KEY", "ENVKEY")
+    monkeypatch.setattr(
+        application, "_edge_rtac_request",
+        lambda u, i, params, h: captured.update(edge_url=u, key=h["Authorization"]) or {"holdings": []},
+    )
+    create_rtac_response(fake, {"rtac_backend": "edge"}, "?query=(x)")
     assert captured["edge_url"] == "https://env-edge.example"
-    assert fake.calls == ["/instance-storage/instances?query=(x)"]  # no /rtac/ fallback
+    assert captured["key"] == "ENVKEY"
+
+
+def test_edge_backend_without_url_or_key_raises(monkeypatch):
+    monkeypatch.setattr(application, "EDGE_RTAC_URL", None)
+    monkeypatch.setattr(application, "EDGE_RTAC_API_KEY", None)
+    fake = FakeFolioClient(
+        responses={"/instance-storage/instances": {"instances": [{"id": "i1"}]}}
+    )
+    with pytest.raises(RuntimeError, match="edge backend needs"):
+        create_rtac_response(fake, {"rtac_backend": "edge"}, "?query=(x)")
+
+
+def test_unknown_backend_raises():
+    fake = FakeFolioClient(
+        responses={"/instance-storage/instances": {"instances": [{"id": "i1"}]}}
+    )
+    with pytest.raises(RuntimeError, match="Unknown rtac_backend"):
+        create_rtac_response(fake, {"rtac_backend": "bogus"}, "?query=(x)")

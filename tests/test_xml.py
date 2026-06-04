@@ -84,3 +84,20 @@ def test_holding_values_handles_missing_fields():
     assert values["UniqueItemId"] == ""
     assert values["Status"] == ""
     assert values["Status_Date"] == ""  # ""[:10] == ""
+    assert values["Loan_Policy"] == ""  # no permanentLoanType (mod-rtac)
+
+
+def test_loan_policy_from_permanent_loan_type_string():
+    values = holding_values({"permanentLoanType": "Can circulate"})
+    assert values["Loan_Policy"] == "Can circulate"
+
+
+def test_loan_policy_from_permanent_loan_type_object():
+    values = holding_values({"permanentLoanType": {"id": "x", "name": "Course reserve"}})
+    assert values["Loan_Policy"] == "Course reserve"
+
+
+def test_loan_policy_empty_when_absent_or_nameless():
+    assert holding_values({"permanentLoanType": None})["Loan_Policy"] == ""
+    assert holding_values({"permanentLoanType": {}})["Loan_Policy"] == ""
+    assert holding_values({"permanentLoanType": ""})["Loan_Policy"] == ""

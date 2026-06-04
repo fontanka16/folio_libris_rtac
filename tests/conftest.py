@@ -25,11 +25,13 @@ class FakeFolioClient:
     """
 
     def __init__(self, responses=None, error=None,
-                 gateway_url="https://okapi.example", tenant_id="tenant"):
+                 gateway_url="https://okapi.example", tenant_id="tenant",
+                 okapi_token="faketoken"):
         self.responses = responses or {}
         self.error = error
         self.gateway_url = gateway_url
         self.tenant_id = tenant_id
+        self.okapi_token = okapi_token
         self.calls = []
         self.closed = False
 

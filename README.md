@@ -10,7 +10,9 @@ below shows the RTAC response displayed in Libris:
 
 Libris asks an external system whether a given title is available and where it
 is held. This service answers that question by talking to FOLIO and returning
-the XML document Libris expects.
+the XML document Libris expects. The Libris loan-status (*lånestatus*)
+integration this implements is specified by the National Library of Sweden —
+see [Libris lånestatus 2025 (PDF)](https://www.kb.se/download/18.53200c4319739465c5d2e7/1749808483695/Libris%20l%C3%A5nestatus%202025.pdf).
 
 - **Multi-tenant.** Each library is identified by its *sigel* and every request
   is scoped to one, e.g. `GET /<sigel>/rtac?ISBN=...`. A sigel maps to its own
@@ -19,9 +21,14 @@ the XML document Libris expects.
   (`Bib_ID`, `ONR`, `ISSN`, `ISBN`). Each is translated into a CQL query against
   FOLIO's `instance-storage/instances`, using the per-library FOLIO
   *identifier-type* UUIDs configured for that parameter.
-- **Availability.** For the first matching instance the service calls FOLIO's
-  `/rtac/{instanceId}` endpoint and maps the returned holdings into the RTAC
-  `<Item_Information>` XML document (location, call number, status, due date …).
+- **Availability.** For the first matching instance the service fetches holdings
+  from FOLIO's **edge-rtac** `getInstanceRtac` when the library has `edge_rtac_url`
+  configured (authenticated with its okapi token — no edge API key; the
+  `full_periodicals`/`lang` settings map to that API's query parameters),
+  otherwise from **mod-rtac**'s `GET /rtac/{id}` via the gateway (the fallback
+  for environments without edge-rtac, e.g. the FOLIO reference environments).
+  The holdings are mapped into the RTAC `<Item_Information>` XML document
+  (location, call number, status, due date …).
 - **Always answers.** When nothing matches — or FOLIO errors — it returns a
   valid XML document with a single `Okänd` ("Unknown") placeholder item rather
   than an error, so Libris always gets a well-formed response.

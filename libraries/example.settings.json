@@ -4,6 +4,9 @@
     "username": "folio-user-name",
     "password": "password-goes-here",
     "fast_track_token": "",
+    "edge_rtac_url": "",
+    "full_periodicals": false,
+    "lang": "",
     "identifier_type_ids": {
         "Bib_ID": [],
         "ONR": [],

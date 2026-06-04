@@ -8,6 +8,7 @@ import secrets
 import threading
 import time
 
+import httpx
 from fastapi import FastAPI, Query, Request, Response
 from fastapi.responses import HTMLResponse, JSONResponse
 from folioclient import (
@@ -224,13 +225,26 @@ def append_item(root, values):
     return item
 
 
+def _loan_policy(holding):
+    """Loan_Policy from edge-rtac's permanentLoanType, if present.
+
+    edge-rtac supplies permanentLoanType (mod-rtac does not), so this is empty
+    on the mod-rtac fallback. The value may be a plain name string or an object
+    with a "name"; returns "" when absent or empty.
+    """
+    value = holding.get("permanentLoanType")
+    if isinstance(value, dict):
+        value = value.get("name")
+    return value or ""
+
+
 def holding_values(holding):
     return {
         "Item_no": "1",
         "UniqueItemId": holding.get("id", ""),
         "Location": holding.get("location", ""),
         "Call_No": holding.get("callNumber", ""),
-        "Loan_Policy": "",
+        "Loan_Policy": _loan_policy(holding),
         "Status": holding.get("status", ""),
         "Status_Date_Description": "",
         "Status_Date": holding.get("dueDate", "")[:10],
@@ -301,19 +315,74 @@ def build_identifier_query(identifiers, identifier_type_ids):
     return "?query=(" + " or ".join(clauses) + ")"
 
 
-def create_rtac_response(folio_client, query):
+# Global fallback edge-rtac base URL, used when a library's settings omit
+# "edge_rtac_url". edge-rtac is reached with the FolioClient's okapi token
+# (x-okapi-* headers) — no edge API key is required (apiKey is optional in the
+# edge-rtac spec).
+EDGE_RTAC_URL = os.environ.get("EDGE_RTAC_URL")
+
+
+def _edge_rtac_headers(folio_client):
+    """okapi headers that let edge-rtac authenticate as our FOLIO user.
+
+    x-okapi-url tells edge-rtac which FOLIO gateway to call internally.
+    """
+    return {
+        "x-okapi-token": folio_client.okapi_token,
+        "x-okapi-tenant": folio_client.tenant_id,
+        "x-okapi-url": folio_client.gateway_url,
+        "accept": "application/json",
+    }
+
+
+def _edge_rtac_request(edge_url, instance_id, params, headers):
+    """GET edge-rtac's getInstanceRtac and return the parsed JSON.
+
+    A separate seam so tests can stub the HTTP call. Raises on a non-2xx
+    response (httpx.HTTPStatusError); a 401/403 is treated as an auth error
+    upstream so the cached client is refreshed and the call retried once.
+    """
+    url = edge_url.rstrip("/") + "/rtac/" + instance_id
+    response = httpx.get(url, params=params, headers=headers, timeout=FOLIO_TIMEOUT)
+    response.raise_for_status()
+    return response.json()
+
+
+def create_rtac_response(folio_client, settings, query):
     """Return the holdings for the first matching instance.
 
-    Uses folio_get_single_object (which, unlike folio_get, does not treat an
-    empty result list as an error) so that "no matching instance" and "instance
-    with no holdings" return an empty list instead of raising.
+    The instance is resolved with FolioClient (folio_get_single_object, which
+    unlike folio_get does not treat an empty result list as an error, so "no
+    matching instance" yields an empty list).
+
+    Holdings come from one of two backends, chosen per library:
+
+    * If ``edge_rtac_url`` (or the ``EDGE_RTAC_URL`` env) is set, FOLIO's
+      edge-rtac ``getInstanceRtac`` is used, authenticated with the FolioClient's
+      okapi token (no edge API key). The per-library ``full_periodicals`` and
+      ``lang`` settings map to the ``fullPeriodicals``/``lang`` query parameters.
+    * Otherwise it falls back to mod-rtac's ``GET /rtac/{id}`` via the gateway
+      (deprecated, but the only rtac available in environments where edge-rtac
+      is not deployed — e.g. the FOLIO reference environments).
     """
     search = folio_client.folio_get_single_object("/instance-storage/instances" + query)
     instances = search.get("instances", [])
     if not instances:
         return []
     instance_id = instances[0]["id"]
-    rtac = folio_client.folio_get_single_object("/rtac/{}".format(instance_id))
+    edge_url = settings.get("edge_rtac_url") or EDGE_RTAC_URL
+    if edge_url:
+        params = {
+            "fullPeriodicals": "true" if settings.get("full_periodicals") else "false"
+        }
+        lang = settings.get("lang")
+        if lang:
+            params["lang"] = lang
+        rtac = _edge_rtac_request(
+            edge_url, instance_id, params, _edge_rtac_headers(folio_client)
+        )
+    else:
+        rtac = folio_client.folio_get_single_object("/rtac/{}".format(instance_id))
     return rtac.get("holdings", [])
 
 
@@ -333,7 +402,7 @@ def fetch_holdings(sigel, settings, query):
     """
     client = get_folio_client(sigel, settings)
     try:
-        return create_rtac_response(client, query)
+        return create_rtac_response(client, settings, query)
     except Exception as exc:
         if not _is_auth_error(exc):
             raise
@@ -342,7 +411,7 @@ def fetch_holdings(sigel, settings, query):
         )
         _invalidate_client(sigel)
         client = get_folio_client(sigel, settings)
-        return create_rtac_response(client, query)
+        return create_rtac_response(client, settings, query)
 
 
 # Libris documentation for the loan-status ("lånestatus") gateway this service
@@ -351,6 +420,12 @@ def fetch_holdings(sigel, settings, query):
 LIBRIS_DOCS_URL = (
     "https://www.kb.se/samverkan-och-utveckling/libris/librissamarbetet/"
     "librissystemen/om-biblioteksdatabasen.html"
+)
+
+# The National Library's technical specification of Libris lånestatus (PDF).
+LIBRIS_LANESTATUS_PDF_URL = (
+    "https://www.kb.se/download/18.53200c4319739465c5d2e7/1749808483695/"
+    "Libris%20l%C3%A5nestatus%202025.pdf"
 )
 
 # A ready-to-use, hosted instance of this service that libraries can try out and
@@ -404,7 +479,18 @@ _INDEX_PAGE = """<!DOCTYPE html>
   </p>
   <p>
     Mer om lånestatus och Biblioteksdatabasen finns i
-    <a href="__DOCS_URL__">Kungliga bibliotekets dokumentation</a>.
+    <a href="__DOCS_URL__">Kungliga bibliotekets dokumentation</a>, och den
+    tekniska specifikationen i
+    <a href="__LANESTATUS_PDF_URL__">Libris lånestatus 2025 (PDF)</a>.
+  </p>
+  <p>
+    Bakom kulisserna slår tjänsten upp instansen i FOLIO
+    (<code>instance-storage</code>) och hämtar sedan beståndet. Finns
+    <strong>edge-rtac</strong> i miljön används dess <code>getInstanceRtac</code>,
+    autentiserat med bibliotekets okapi-token (ingen separat API-nyckel) — och då
+    kan biblioteket själv styra <code>fullPeriodicals</code> och <code>lang</code>
+    via sina inställningar. Saknas edge-rtac faller tjänsten tillbaka på mod-rtac
+    (<code>/rtac/{instanceId}</code>) via gatewayen.
   </p>
 
   <h2>Så ansluter ert bibliotek</h2>
@@ -476,6 +562,7 @@ def index_html(sigels):
         )
     return (
         _INDEX_PAGE.replace("__DOCS_URL__", LIBRIS_DOCS_URL)
+        .replace("__LANESTATUS_PDF_URL__", LIBRIS_LANESTATUS_PDF_URL)
         .replace("__HOSTED_URL__", HOSTED_SERVICE_URL)
         .replace("__SOURCE_URL__", SOURCE_CODE_URL)
         .replace("__LIBRARIES__", libraries)

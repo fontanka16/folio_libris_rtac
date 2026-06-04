@@ -94,23 +94,7 @@ Make sure the FOLIO user has valid permissions. Below is a good start:
 ```json
 {
   "permissionNames": [
-    "inventory.all",
-    "inventory.instances.collection.get",
-    "rtac.all",
-    "inventory-storage.holdings.collection.get",
-    "perms.users.get",
-    "users.collection.get",
-    "inventory-storage.location-units.libraries.collection.get",
-    "circulation.loans.collection.get",
-    "circulation.requests.collection.get",
-    "inventory-storage.items.collection.get",
-    "inventory-storage.instances.collection.get",
-    "circulation-storage.loans.collection.get",
-    "orders.collection.get",
-    "inventory-storage.instances.item.get",
-    "scheduled-notice-storage.scheduled-notices.collection.get",
-    "users.item.get",
-    "email.message.collection.get"
+    "TO BE ADDED LATER"
   ],
   "totalRecords": 17
 }

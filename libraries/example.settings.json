@@ -3,6 +3,7 @@
     "tenant_id": "tenant-id-goes-here",
     "username": "folio-user-name",
     "password": "password-goes-here",
+    "fast_track_token": "",
     "identifier_type_ids": {
         "Bib_ID": [],
         "ONR": [],

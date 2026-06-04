@@ -4,6 +4,7 @@ import logging
 import math
 import os
 import re
+import secrets
 import threading
 import time
 
@@ -15,10 +16,22 @@ from folioclient import (
     FolioPermissionError,
 )
 from lxml import etree
+from slowapi import Limiter
+from slowapi.errors import RateLimitExceeded
+from slowapi.util import get_remote_address
 
 logger = logging.getLogger("rtac")
 
 application = FastAPI()
+
+# Rate limit for the rtac endpoint, keyed per client IP. A request that carries
+# a library's configured fast_track_token costs 0 and is therefore never limited
+# — Libris's registered status URL embeds the token, so legitimate availability
+# checks are unaffected while the public path is capped. Throttled requests still
+# get a valid (empty) RTAC document. Tune via RTAC_RATE_LIMIT (limits syntax).
+RTAC_RATE_LIMIT = os.environ.get("RTAC_RATE_LIMIT", "30/minute")
+limiter = Limiter(key_func=get_remote_address, default_limits=[])
+application.state.limiter = limiter
 
 LIBRARIES_DIR = os.environ.get("LIBRARIES_PATH") or os.path.join(
     os.path.dirname(os.path.abspath(__file__)), "libraries"
@@ -109,6 +122,32 @@ def load_settings(sigel):
     path = os.path.join(LIBRARIES_DIR, sigel, "settings.json")
     with open(path, encoding="utf-8") as f:
         return json.load(f)
+
+
+def _is_fast_track(request):
+    """True if the request carries the correct fast-track token for its sigel.
+
+    The token rides in the `?token=` query parameter of the library's registered
+    Libris status URL. It is compared in constant time and never interpolated
+    anywhere, so it is purely a rate-limit bypass marker (not a secret to guard).
+    Returns False on any miss: no token, unknown sigel, or no token configured.
+    """
+    token = request.query_params.get("token")
+    sigel = request.path_params.get("sigel")
+    if not token or not sigel:
+        return False
+    try:
+        configured = load_settings(sigel).get("fast_track_token")
+    except Exception:
+        return False
+    if not configured:
+        return False
+    return secrets.compare_digest(str(token), str(configured))
+
+
+def _rtac_cost(request):
+    """Rate-limit cost of a request: 0 (exempt) when fast-tracked, else 1."""
+    return 0 if _is_fast_track(request) else 1
 
 
 def _new_folio_client(settings):
@@ -449,12 +488,19 @@ def index():
 
 
 @application.get("/{sigel}/rtac")
+@limiter.limit(lambda: RTAC_RATE_LIMIT, cost=_rtac_cost)
 def rtac(
+    request: Request,
     sigel: str,
     Bib_ID: str = Query(None),
     ONR: str = Query(None),
     ISSN: str = Query(None),
     ISBN: str = Query(None),
+    token: str = Query(
+        None,
+        description="Per-sigel fast-track token; a valid value exempts the "
+        "request from rate limiting.",
+    ),
 ):
     settings = load_settings(sigel)
     query = build_identifier_query(
@@ -512,6 +558,19 @@ def validate_folio_connection(sigel: str):
         }
     finally:
         _close_client(folio_client)
+
+
+@application.exception_handler(RateLimitExceeded)
+def handle_rate_limit(request: Request, exc: RateLimitExceeded):
+    """A throttled rtac request still gets a valid (empty) RTAC document."""
+    logger.warning(
+        "Rate limit hit for %s from %s", request.url.path, get_remote_address(request)
+    )
+    if request.url.path.endswith("/rtac"):
+        return Response(
+            etree.tostring(empty_item_information()), media_type="text/xml"
+        )
+    return JSONResponse({"error": "Rate limit exceeded"}, status_code=429)
 
 
 @application.exception_handler(Exception)

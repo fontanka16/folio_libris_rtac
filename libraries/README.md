@@ -13,6 +13,13 @@ fill in the values:
   to several identifier types — list each UUID and the search ORs them together.
   Use an empty list `[]` to disable searching by that identifier for this
   library. (A single UUID string or a comma-separated string also works.)
+- `fast_track_token` — an optional secret that exempts requests from rate
+  limiting. The `/<sigel>/rtac` endpoint is rate-limited per client IP; a
+  request whose `?token=` matches this value is never throttled. Bake it into
+  the status URL you register for this library in Biblioteksdatabasen
+  (`https://<host>/<sigel>/rtac?token=<value>`) so Libris always has the fast
+  lane. Leave it empty (`""`) to keep the library public-but-rate-limited.
+  Generate one with `python scripts/issue_token.py <sigel>`.
 
 The list of configured sigels is available at `GET /`, and a library's FOLIO
 connection can be checked at `GET /<sigel>/validate-folio-connection`.

@@ -97,6 +97,21 @@ def clear_client_cache():
     application._client_cache.clear()
 
 
+@pytest.fixture(autouse=True)
+def rate_limiter_off():
+    """Disable the rate limiter for tests that don't target it.
+
+    The limiter is process-global with in-memory state; left on, its counters
+    would leak across the many rtac calls in the suite. Tests that exercise it
+    re-enable it (and reset the store) themselves.
+    """
+    application.limiter.enabled = False
+    application.limiter._storage.reset()
+    yield
+    application.limiter.enabled = False
+    application.limiter._storage.reset()
+
+
 @pytest.fixture
 def client():
     """TestClient that lets the registered exception handler win.

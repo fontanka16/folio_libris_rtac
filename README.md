@@ -117,7 +117,12 @@ This project uses [uv](https://docs.astral.sh/uv/) for dependency management.
 Every endpoint is scoped to a library sigel as the first path segment.
 
 - `GET /<sigel>/rtac?Bib_ID=<libris-id>` — the RTAC lookup. Also accepts `ONR`,
-  `ISSN`, and `ISBN`. Returns an XML `<Item_Information>` response.
+  `ISSN`, and `ISBN`. Returns an XML `<Item_Information>` response. Rate-limited
+  per client IP (`RTAC_RATE_LIMIT`, default `30/minute`); a request whose
+  `?token=` matches the library's `fast_track_token` is exempt, so Libris's
+  registered status URL is never throttled. A throttled request still gets a
+  valid (empty) RTAC document. Issue a token with
+  `python scripts/issue_token.py <sigel>` (see [libraries/README.md](libraries/README.md)).
 - `GET /<sigel>/validate-folio-connection` — checks a library's FOLIO
   connection: `200` if it can log in, `404` for an unknown sigel, `503` if
   settings are missing, `502` if FOLIO is unreachable.

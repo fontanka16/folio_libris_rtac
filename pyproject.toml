@@ -9,6 +9,7 @@ dependencies = [
     "uvicorn[standard]",
     "folioclient>=1.0.8",
     "lxml>=4.6.3",
+    "slowapi>=0.1.9",
 ]
 
 [dependency-groups]

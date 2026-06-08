@@ -225,17 +225,29 @@ def append_item(root, values):
     return item
 
 
-def _loan_policy(holding):
-    """Loan_Policy from edge-rtac's permanentLoanType, if present.
+def _loan_type_name(value):
+    """Resolve a loan-type value to its name.
 
-    edge-rtac supplies permanentLoanType (mod-rtac does not), so this is empty
-    on the mod-rtac fallback. The value may be a plain name string or an object
-    with a "name"; returns "" when absent or empty.
+    The value may be a plain name string or an object with a "name"; returns
+    "" when absent or empty.
     """
-    value = holding.get("permanentLoanType")
     if isinstance(value, dict):
         value = value.get("name")
     return value or ""
+
+
+def _loan_policy(holding):
+    """Loan_Policy from edge-rtac's loan type, if present.
+
+    edge-rtac supplies permanentLoanType (mod-rtac does not), so this is empty
+    on the mod-rtac fallback. When temporaryLoanType is set it takes precedence
+    over permanentLoanType. Each value may be a plain name string or an object
+    with a "name"; returns "" when absent or empty.
+    """
+    temporary = _loan_type_name(holding.get("temporaryLoanType"))
+    if temporary:
+        return temporary
+    return _loan_type_name(holding.get("permanentLoanType"))
 
 
 def holding_values(holding):
@@ -651,13 +663,13 @@ def validate_folio_connection(sigel: str):
             status_code=502,
         )
     # This client is one-shot (not cached), so close its connection pool once
-    # we've read what we need — otherwise every validate call leaks a pool.
+    # we've confirmed the connection — otherwise every validate call leaks a pool.
+    # We deliberately don't echo back okapi_url/tenant to avoid disclosing
+    # server details; "ok" is enough to confirm the connection works.
     try:
         return {
             "status": "ok",
             "sigel": sigel,
-            "okapi_url": folio_client.gateway_url,
-            "tenant": folio_client.tenant_id,
         }
     finally:
         _close_client(folio_client)

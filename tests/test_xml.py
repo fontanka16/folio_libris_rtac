@@ -101,3 +101,34 @@ def test_loan_policy_empty_when_absent_or_nameless():
     assert holding_values({"permanentLoanType": None})["Loan_Policy"] == ""
     assert holding_values({"permanentLoanType": {}})["Loan_Policy"] == ""
     assert holding_values({"permanentLoanType": ""})["Loan_Policy"] == ""
+
+
+def test_loan_policy_temporary_takes_precedence():
+    holding = {
+        "permanentLoanType": "Can circulate",
+        "temporaryLoanType": "Course reserve",
+    }
+    assert holding_values(holding)["Loan_Policy"] == "Course reserve"
+
+
+def test_loan_policy_temporary_object_takes_precedence():
+    holding = {
+        "permanentLoanType": {"id": "p", "name": "Can circulate"},
+        "temporaryLoanType": {"id": "t", "name": "Reading room"},
+    }
+    assert holding_values(holding)["Loan_Policy"] == "Reading room"
+
+
+def test_loan_policy_falls_back_to_permanent_when_temporary_empty():
+    assert (
+        holding_values(
+            {"permanentLoanType": "Can circulate", "temporaryLoanType": None}
+        )["Loan_Policy"]
+        == "Can circulate"
+    )
+    assert (
+        holding_values(
+            {"permanentLoanType": "Can circulate", "temporaryLoanType": {}}
+        )["Loan_Policy"]
+        == "Can circulate"
+    )

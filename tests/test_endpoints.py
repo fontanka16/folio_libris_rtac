@@ -158,9 +158,9 @@ def test_validate_success_200(client, libraries_dir, settings, monkeypatch):
     assert body == {
         "status": "ok",
         "sigel": "alpha",
-        "okapi_url": "https://okapi.example",
-        "tenant": "diku",
     }
+    # Server details (okapi_url / tenant) must not be disclosed in the response.
+    assert "okapi_url" not in body and "tenant" not in body
     # The one-shot client must be closed so we don't leak a connection pool.
     assert fake.closed is True
 

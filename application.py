@@ -23,6 +23,23 @@ from slowapi.util import get_remote_address
 
 logger = logging.getLogger("rtac")
 
+# Optional logging for local debugging. Set LOG_LEVEL (e.g. DEBUG, INFO) to
+# attach a stderr handler and raise the app's log level; at DEBUG this also turns
+# on httpx, so every outgoing FOLIO/edge HTTP request is logged — request line
+# and status only, not headers or bodies, so the okapi password / edge apiKey are
+# never exposed. Unset (the default, incl. in the container), logging is left to
+# uvicorn and only warnings/errors surface.
+_LOG_LEVEL = os.environ.get("LOG_LEVEL")
+if _LOG_LEVEL:
+    _level = getattr(logging, _LOG_LEVEL.strip().upper(), None)
+    if isinstance(_level, int):
+        logging.basicConfig(level=_level)
+        logger.setLevel(_level)
+        if _level <= logging.DEBUG:
+            logging.getLogger("httpx").setLevel(logging.DEBUG)
+    else:
+        logger.warning("Ignoring invalid LOG_LEVEL=%r", _LOG_LEVEL)
+
 application = FastAPI()
 
 # Rate limit for the rtac endpoint, keyed per client IP. A request that carries
@@ -411,7 +428,7 @@ def _probe_edge_connection(settings):
     _edge_rtac_holdings(settings, EDGE_VALIDATE_INSTANCE_ID)
 
 
-def create_rtac_response(folio_client, settings, query):
+def create_rtac_response(folio_client:FolioClient, settings, query):
     """Return the holdings for the first matching instance.
 
     The instance is resolved with FolioClient (folio_get_single_object, which
@@ -430,9 +447,11 @@ def create_rtac_response(folio_client, settings, query):
 
     All three return a ``{"holdings": [...]}`` envelope.
     """
-    search = folio_client.folio_get_single_object("/instance-storage/instances" + query)
+    full_path = "/instance-storage/instances" + query
+    search = folio_client.folio_get_single_object(full_path)
     instances = search.get("instances", [])
     if not instances:
+        logger.debug("No instance found for query %r", query)
         return []
     instance_id = instances[0]["id"]
     backend = (settings.get("rtac_backend") or DEFAULT_RTAC_BACKEND).strip().lower()
@@ -448,8 +467,10 @@ def create_rtac_response(folio_client, settings, query):
                 backend, ", ".join(RTAC_BACKENDS)
             )
         )
-    return rtac.get("holdings", [])
-
+    holdings = rtac.get("holdings", [])
+    if not holdings:
+        logger.debug("No holdings found for instance %r (query %r)", instance_id, query)
+    return holdings
 
 def _is_auth_error(exc):
     """True if the exception is a FOLIO 401/403 (e.g. an expired token)."""

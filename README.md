@@ -118,6 +118,11 @@ This project uses [uv](https://docs.astral.sh/uv/) for dependency management.
 - Configure one or more libraries (see [Configuring libraries](#configuring-libraries)).
 - Run the app with `uv run uvicorn application:application --reload --port 5000`
   (or `uv run python application.py`).
+- For local debugging, set `LOG_LEVEL=debug` to log the app's own lines and every
+  outgoing FOLIO/edge HTTP request (httpx): `LOG_LEVEL=debug uv run uvicorn
+  application:application --reload --port 5000`. httpx logs request lines and
+  status only (not headers or bodies), so credentials are not exposed. Add
+  uvicorn's `--log-level debug` too if you also want its access logs.
 
 ## Endpoints
 

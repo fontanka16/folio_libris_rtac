@@ -60,6 +60,19 @@ The app trusts `X-Forwarded-*` (uvicorn runs with `--proxy-headers
 
 ## Updating
 
+One command — pull, rebuild, recreate, and wait until the container is healthy
+(fails with a non-zero exit and recent logs if anything breaks):
+
+       cd folio_libris_rtac
+       scripts/deploy.sh
+
+Useful flags: `--validate` also checks each library's backend API(s) via
+`/validate-folio-connection` after the deploy; `--no-pull` deploys the current
+working tree as-is; `--logs` follows the log afterwards; `--help` lists the
+rest. docker runs via `sudo` by default (`DOCKER=docker` to override).
+
+The script just wraps the manual steps, if you prefer to run them yourself:
+
        cd folio_libris_rtac
        git pull
        docker compose up --build -d

@@ -166,6 +166,17 @@ def _new_folio_client(settings):
     )
 
 
+def _probe_folio_connection(folio_client):
+    """Exercise the instance-search API that every backend starts from.
+
+    A successful login alone doesn't prove the user may read inventory; a minimal
+    instance-storage query (limit=1) confirms /instance-storage/instances is
+    reachable and authorized — the first hop of an rtac request in every backend,
+    edge included.
+    """
+    folio_client.folio_get_single_object("/instance-storage/instances?limit=1")
+
+
 def _sigel_lock(sigel):
     """Return a per-sigel lock, creating it on first use."""
     with _client_locks_guard:
@@ -339,6 +350,14 @@ RTAC_BACKENDS = ("rtac-cache", "edge", "rtac")
 DEFAULT_RTAC_BACKEND = "rtac"
 
 
+def _edge_rtac_config(settings):
+    """Resolve the edge-rtac url + api key: per-library setting, then env fallback."""
+    return (
+        settings.get("edge_rtac_url") or EDGE_RTAC_URL,
+        settings.get("edge_rtac_api_key") or EDGE_RTAC_API_KEY,
+    )
+
+
 def _edge_rtac_request(edge_url, instance_id, params, headers):
     """GET edge-rtac's getInstanceRtac and return the parsed JSON.
 
@@ -357,8 +376,7 @@ def _edge_rtac_holdings(settings, instance_id):
 
     The apiKey already encodes tenant + user, so no okapi headers are needed.
     """
-    edge_url = settings.get("edge_rtac_url") or EDGE_RTAC_URL
-    api_key = settings.get("edge_rtac_api_key") or EDGE_RTAC_API_KEY
+    edge_url, api_key = _edge_rtac_config(settings)
     if not edge_url or not api_key:
         raise RuntimeError(
             "edge backend needs edge_rtac_url and edge_rtac_api_key "
@@ -372,6 +390,25 @@ def _edge_rtac_holdings(settings, instance_id):
         params["lang"] = lang
     headers = {"Authorization": api_key, "Accept": "application/json"}
     return _edge_rtac_request(edge_url, instance_id, params, headers)
+
+
+# A throwaway instance id used only to exercise the edge-rtac connection from the
+# validate endpoint. edge-rtac answers getInstanceRtac for an unknown instance
+# with 200 + empty holdings, so a good url/apiKey returns cleanly while a bad
+# apiKey yields 401/403 and a wrong/unreachable url a transport error.
+EDGE_VALIDATE_INSTANCE_ID = "00000000-0000-0000-0000-000000000000"
+
+
+def _probe_edge_connection(settings):
+    """Confirm edge-rtac is reachable and the apiKey is accepted.
+
+    Runs a real getInstanceRtac for a throwaway instance id over the same path a
+    live request uses (sharing the url/apiKey/header handling), so a bad edge
+    url/apiKey is caught at validate time rather than silently yielding empty
+    holdings. Returns None on success; propagates the auth/transport error on
+    failure.
+    """
+    _edge_rtac_holdings(settings, EDGE_VALIDATE_INSTANCE_ID)
 
 
 def create_rtac_response(folio_client, settings, query):
@@ -652,6 +689,30 @@ def validate_folio_connection(sigel: str):
             {"status": "error", "detail": "Missing settings: " + ", ".join(missing)},
             status_code=503,
         )
+    backend = (settings.get("rtac_backend") or DEFAULT_RTAC_BACKEND).strip().lower()
+    # The edge backend resolves the instance via FOLIO (below) but fetches
+    # holdings from edge-rtac with its own url + apiKey, so those must be present
+    # too — treat them like missing FOLIO settings (config incomplete -> 503).
+    if backend == "edge":
+        edge_url, api_key = _edge_rtac_config(settings)
+        edge_missing = [
+            name
+            for name, value in (
+                ("edge_rtac_url", edge_url),
+                ("edge_rtac_api_key", api_key),
+            )
+            if not value
+        ]
+        if edge_missing:
+            return JSONResponse(
+                {
+                    "status": "error",
+                    "sigel": sigel,
+                    "backend": backend,
+                    "detail": "Missing edge settings: " + ", ".join(edge_missing),
+                },
+                status_code=503,
+            )
     try:
         folio_client = _new_folio_client(settings)
     except Exception as e:
@@ -667,10 +728,56 @@ def validate_folio_connection(sigel: str):
     # We deliberately don't echo back okapi_url/tenant to avoid disclosing
     # server details; "ok" is enough to confirm the connection works.
     try:
-        return {
+        # Every backend starts by resolving the instance via FOLIO, so confirm
+        # that API actually answers (not just that login succeeded) before
+        # reporting ok — that first hop is shared by all modes, edge included.
+        try:
+            _probe_folio_connection(folio_client)
+        except Exception as e:
+            logger.error(
+                "FOLIO instance-storage validation failed for %s: %s",
+                sigel,
+                e,
+                exc_info=e,
+            )
+            return JSONResponse(
+                {
+                    "status": "error",
+                    "sigel": sigel,
+                    "backend": backend,
+                    "detail": "Could not query FOLIO instance-storage: {}".format(e),
+                },
+                status_code=502,
+            )
+        result = {
             "status": "ok",
             "sigel": sigel,
+            "backend": backend,
+            "folio": {"status": "ok"},
         }
+        # When the library serves holdings from edge-rtac, validate that second
+        # API too and report its status alongside the FOLIO one.
+        if backend == "edge":
+            try:
+                _probe_edge_connection(settings)
+            except Exception as e:
+                logger.error(
+                    "edge-rtac connection validation failed for %s: %s",
+                    sigel,
+                    e,
+                    exc_info=e,
+                )
+                return JSONResponse(
+                    {
+                        "status": "error",
+                        "sigel": sigel,
+                        "backend": backend,
+                        "detail": "Could not connect to edge-rtac: {}".format(e),
+                    },
+                    status_code=502,
+                )
+            result["edge"] = {"status": "ok"}
+        return result
     finally:
         _close_client(folio_client)
 

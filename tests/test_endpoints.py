@@ -158,11 +158,95 @@ def test_validate_success_200(client, libraries_dir, settings, monkeypatch):
     assert body == {
         "status": "ok",
         "sigel": "alpha",
+        "backend": "rtac",  # default backend; only the FOLIO API to report
+        "folio": {"status": "ok"},
     }
     # Server details (okapi_url / tenant) must not be disclosed in the response.
     assert "okapi_url" not in body and "tenant" not in body
+    # The instance-search API is actually exercised, not just login.
+    assert any("/instance-storage/instances" in c for c in fake.calls)
     # The one-shot client must be closed so we don't leak a connection pool.
     assert fake.closed is True
+
+
+def test_validate_folio_instance_storage_unauthorized_502(
+    client, libraries_dir, settings, monkeypatch
+):
+    # Login succeeds but the instance-search query fails (e.g. missing inventory
+    # read perm) -> the API check, not just login, catches it.
+    fake = FakeFolioClient(error=RuntimeError("forbidden"))
+    monkeypatch.setattr(application, "_new_folio_client", lambda s: fake)
+    libraries_dir("alpha", settings)
+    resp = client.get("/alpha/validate-folio-connection")
+    assert resp.status_code == 502
+    assert "instance-storage" in resp.json()["detail"]
+    assert fake.closed is True
+
+
+# --- validate with the edge backend (also probes edge-rtac) -----------------
+
+
+def _edge_settings(settings):
+    return {
+        **settings,
+        "rtac_backend": "edge",
+        "edge_rtac_url": "https://edge.example",
+        "edge_rtac_api_key": "KEY123",
+    }
+
+
+def test_validate_edge_success_reports_edge_status(
+    client, libraries_dir, settings, monkeypatch
+):
+    fake = FakeFolioClient()
+    monkeypatch.setattr(application, "_new_folio_client", lambda s: fake)
+    # edge reachable + apiKey accepted -> probe returns without raising.
+    monkeypatch.setattr(application, "_probe_edge_connection", lambda s: None)
+    libraries_dir("alpha", _edge_settings(settings))
+
+    resp = client.get("/alpha/validate-folio-connection")
+    assert resp.status_code == 200
+    # Both APIs the edge flow uses are reported: FOLIO (instance search) + edge.
+    assert resp.json() == {
+        "status": "ok",
+        "sigel": "alpha",
+        "backend": "edge",
+        "folio": {"status": "ok"},
+        "edge": {"status": "ok"},
+    }
+    # The one-shot FOLIO client is still closed even on the edge path.
+    assert fake.closed is True
+
+
+def test_validate_edge_unreachable_502(client, libraries_dir, settings, monkeypatch):
+    fake = FakeFolioClient()
+    monkeypatch.setattr(application, "_new_folio_client", lambda s: fake)
+
+    def boom(s):
+        raise ConnectionError("edge refused")
+
+    monkeypatch.setattr(application, "_probe_edge_connection", boom)
+    libraries_dir("alpha", _edge_settings(settings))
+
+    resp = client.get("/alpha/validate-folio-connection")
+    assert resp.status_code == 502
+    body = resp.json()
+    assert body["status"] == "error" and body["backend"] == "edge"
+    assert "edge-rtac" in body["detail"]
+    # FOLIO connected fine, so its one-shot client must still be closed.
+    assert fake.closed is True
+
+
+def test_validate_edge_missing_config_503(client, libraries_dir, settings, monkeypatch):
+    # backend=edge but no edge url/key and no env fallback -> config incomplete.
+    monkeypatch.setattr(application, "EDGE_RTAC_URL", None)
+    monkeypatch.setattr(application, "EDGE_RTAC_API_KEY", None)
+    libraries_dir("alpha", {**settings, "rtac_backend": "edge"})
+
+    resp = client.get("/alpha/validate-folio-connection")
+    assert resp.status_code == 503
+    detail = resp.json()["detail"]
+    assert "edge_rtac_url" in detail and "edge_rtac_api_key" in detail
 
 
 # --- exception handler (JSON branch) ----------------------------------------

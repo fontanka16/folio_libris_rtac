@@ -130,9 +130,14 @@ Every endpoint is scoped to a library sigel as the first path segment.
   registered status URL is never throttled. A throttled request still gets a
   valid (empty) RTAC document. Issue a token with
   `python scripts/issue_token.py <sigel>` (see [libraries/README.md](libraries/README.md)).
-- `GET /<sigel>/validate-folio-connection` — checks a library's FOLIO
-  connection: `200` if it can log in, `404` for an unknown sigel, `503` if
-  settings are missing, `502` if FOLIO is unreachable.
+- `GET /<sigel>/validate-folio-connection` — checks the API(s) a library's rtac
+  request uses. Every backend starts by resolving the instance in FOLIO, so this
+  logs in **and** runs a minimal `/instance-storage/instances` query (so a login
+  that lacks inventory-read is caught, not just bad credentials); the `200` body
+  reports `backend` and `folio: {"status": "ok"}`. When `backend` is `edge`, the
+  edge-rtac hop is probed too and reported under `edge`. Returns `404` for an
+  unknown sigel, `503` if FOLIO (or, for edge, edge url/apiKey) settings are
+  missing, `502` if FOLIO or edge-rtac is unreachable or rejects the credentials.
 - `GET /` — an HTML landing page describing the service (in Swedish), with a
   link to the Libris documentation, onboarding instructions for libraries, and
   the list of configured sigels.

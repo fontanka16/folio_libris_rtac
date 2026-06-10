@@ -655,7 +655,7 @@ def index_html(sigels):
     )
 
 
-@application.get("/", response_class=HTMLResponse)
+@application.api_route("/", methods=["GET", "HEAD"], response_class=HTMLResponse)
 def index():
     return HTMLResponse(index_html(available_sigels()))
 

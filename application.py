@@ -583,9 +583,22 @@ _INDEX_PAGE = """<!DOCTYPE html>
   <p>Varje bibliotek identifieras av sitt <em>sigel</em>. För att bli uppsatt:</p>
   <ol>
     <li>Ha ett FOLIO-tenant som tjänsten kan nå.</li>
-    <li>Skapa en FOLIO-användare med <strong>enbart läsbehörigheter</strong>
-        (bl.a. <code>rtac.all</code> samt läsrättigheter på inventory, holdings
-        och items).</li>
+    <li>Skapa en FOLIO-användare med <strong>enbart läsbehörigheter</strong>.
+        Användaren behöver följande behörigheter:
+        <ul>
+          <li><code>inventory-storage.instances.collection.get</code> &ndash; läs instanser (samling)</li>
+          <li><code>inventory-storage.instances.item.get</code> &ndash; läs enskild instans</li>
+          <li><code>inventory-storage.holdings.collection.get</code> &ndash; läs beståndsposter (samling)</li>
+          <li><code>inventory-storage.holdings.item.get</code> &ndash; läs enskild beståndspost</li>
+          <li><code>inventory-storage.items.collection.get</code> &ndash; läs exemplar (samling)</li>
+          <li><code>inventory-storage.items.item.get</code> &ndash; läs enskilt exemplar</li>
+          <li><code>inventory-storage.loan-types.collection.get</code> &ndash; läs lånetyper (samling)</li>
+          <li><code>inventory-storage.loan-types.item.get</code> &ndash; läs enskild lånetyp</li>
+          <li><code>inventory-storage.locations.collection.get</code> &ndash; läs placeringar (samling)</li>
+          <li><code>inventory-storage.locations.item.get</code> &ndash; läs enskild placering</li>
+          <li><code>rtac.holdings.item.get</code> &ndash; äldre RTAC (mod-rtac): läs enskild beståndspost</li>
+        </ul>
+        Hela listan finns i <code>libraries/folio-permissions.json</code> i källkoden.</li>
     <li>Ta reda på vilka FOLIO <em>identifier-type</em>-UUID:n som motsvarar de
         identifierare ni vill kunna söka på (<code>Bib_ID</code>,
         <code>ONR</code>, <code>ISSN</code>, <code>ISBN</code>).</li>
@@ -823,7 +836,9 @@ def handle_error(request: Request, e: Exception):
         return Response(
             etree.tostring(empty_item_information()), media_type="text/xml"
         )
-    return JSONResponse({"error": str(e)}, status_code=500)
+    # Don't echo the exception text to the client — it can leak internal paths,
+    # FOLIO URLs, or stack details. The full error is logged above.
+    return JSONResponse({"error": "Internal server error"}, status_code=500)
 
 
 if __name__ == "__main__":

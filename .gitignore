@@ -9,5 +9,11 @@ static/package-lock.json
 __pycache__/
 *.pyc
 
-# Per-library settings (contain FOLIO credentials); keep the template/README
-libraries/*/
+# Per-library settings (contain FOLIO credentials). Ignore everything under
+# libraries/ so a stray credential file can't be committed by accident; the
+# per-sigel dirs (libraries/<sigel>/settings.json) stay ignored. Explicitly
+# allow the non-secret tracked files (template, README, permission list).
+libraries/*
+!libraries/README.md
+!libraries/example.settings.json
+!libraries/folio-permissions.json

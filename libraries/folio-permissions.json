@@ -1,0 +1,57 @@
+[
+    {
+        "name": "inventory-storage_holdings_collection.view",
+        "description": "get holdings collection from storage",
+        "permission": "inventory-storage.holdings.collection.get"
+    },
+    {
+        "name": "inventory-storage_holdings_item.view",
+        "description": "get individual holdings record from storage",
+        "permission": "inventory-storage.holdings.item.get"
+    },
+    {
+        "name": "inventory-storage_instances_collection.view",
+        "description": "get instance collection from storage",
+        "permission": "inventory-storage.instances.collection.get"
+    },
+    {
+        "name": "inventory-storage_instances_item.view",
+        "description": "get individual instance from storage",
+        "permission": "inventory-storage.instances.item.get"
+    },
+    {
+        "name": "inventory-storage_items_collection.view",
+        "description": "get item collection from storage",
+        "permission": "inventory-storage.items.collection.get"
+    },
+    {
+        "name": "inventory-storage_items_item.view",
+        "description": "get individual item from storage",
+        "permission": "inventory-storage.items.item.get"
+    },
+    {
+        "name": "inventory-storage_loan-types_collection.view",
+        "description": "get loan-type collection from storage",
+        "permission": "inventory-storage.loan-types.collection.get"
+    },
+    {
+        "name": "inventory-storage_loan-types_item.view",
+        "description": "get individual loan-type from storage",
+        "permission": "inventory-storage.loan-types.item.get"
+    },
+    {
+        "name": "inventory-storage_locations_collection.view",
+        "description": "get location collection",
+        "permission": "inventory-storage.locations.collection.get"
+    },
+    {
+        "name": "inventory-storage_locations_item.view",
+        "description": "get individual location",
+        "permission": "inventory-storage.locations.item.get"
+    },
+    {
+        "name": "rtac_holdings_item.view",
+        "description": "Legacy RTAC - Get individual holding",
+        "permission": "rtac.holdings.item.get"
+    }
+]

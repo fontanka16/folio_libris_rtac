@@ -96,16 +96,23 @@ variable.
 
 ### FOLIO permissions
 
-Make sure the FOLIO user has valid permissions. Below is a good start:
+The FOLIO user needs **read-only** permissions. Assign the following 11
+permissions; the full machine-readable list (with permission-set names) is in
+[libraries/folio-permissions.json](libraries/folio-permissions.json).
 
-```json
-{
-  "permissionNames": [
-    "TO BE ADDED LATER"
-  ],
-  "totalRecords": 17
-}
-```
+| Permission | Purpose |
+| --- | --- |
+| `inventory-storage.instances.collection.get` | get instance collection from storage |
+| `inventory-storage.instances.item.get` | get individual instance from storage |
+| `inventory-storage.holdings.collection.get` | get holdings collection from storage |
+| `inventory-storage.holdings.item.get` | get individual holdings record from storage |
+| `inventory-storage.items.collection.get` | get item collection from storage |
+| `inventory-storage.items.item.get` | get individual item from storage |
+| `inventory-storage.loan-types.collection.get` | get loan-type collection from storage |
+| `inventory-storage.loan-types.item.get` | get individual loan-type from storage |
+| `inventory-storage.locations.collection.get` | get location collection |
+| `inventory-storage.locations.item.get` | get individual location |
+| `rtac.holdings.item.get` | Legacy RTAC (mod-rtac) — get individual holding |
 
 ## Installation
 

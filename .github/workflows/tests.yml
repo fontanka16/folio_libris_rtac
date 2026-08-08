@@ -1,11 +1,20 @@
 name: tests
 
-# Anropar den delade testkörningen i bibliotekarien-platform. All logik bor där,
-# så en ändring av hur tester körs sker på ett ställe och inte i sju repon.
-# Se bibliotekarien-platform/.github/README.md.
+# Fristående, avsiktligt. folio_libris_rtac är ett öppet repo, och de övriga
+# Python-repona i orgen anropar i stället ett delat workflow i det privata
+# bibliotekarien-platform. Här står hela definitionen på plats, av två skäl:
 #
-# folio_libris_rtac har pyproject.toml och uv.lock i roten, så ingen
-# working-directory behöver anges.
+#   1. Läsbarhet utifrån. En `uses:`-rad mot ett privat repo pekar in i något en
+#      utomstående bidragsgivare inte kan läsa. CI:n blir omöjlig att förstå
+#      eller reproducera för den som inte redan har åtkomst — precis motsatsen
+#      till vad man vill i ett projekt man bjuder in folk till.
+#   2. Ett publikt repos körningsloggar är publika. Att anropa ett privat
+#      workflow därifrån läcker dess struktur, och GitHub tillåter det troligen
+#      inte alls.
+#
+# Priset är att den här filen måste hållas i synk med
+# bibliotekarien-platform/.github/workflows/python-tests.yml när den ändras.
+# Den är kanonisk; den här är kopian.
 
 on:
   pull_request:
@@ -14,6 +23,37 @@ on:
   push:
     branches: [main]
 
+# Testkörningen skriver ingenting och behöver inga secrets. Det senare är
+# avsiktligt: fork-PR:er får inga secrets, så jobbet fungerar oförändrat på dem.
+permissions:
+  contents: read
+
 jobs:
-  tests:
-    uses: Bibliotekarien/bibliotekarien-platform/.github/workflows/python-tests.yml@main
+  pytest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      # SHA-pinnade, inte flytande taggar — en action kör med jobbets egna
+      # rättigheter. Taggkommentaren är läshjälp; SHA:n är det som gäller.
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Lämna inte kvar checkout-tokenet i .git/config där senare steg
+          # (eller kod ur PR:en) kan använda det.
+          persist-credentials: false
+
+      - name: Installera uv
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      # --locked failar om uv.lock inte matchar pyproject.toml. Det är en grind,
+      # inte en olägenhet: den fångar en ändrad dependency som inte låsts om,
+      # vilket annars ger olika beroenden i CI och i produktion.
+      - name: Installera beroenden exakt enligt lockfilen
+        run: uv sync --locked
+
+      - name: pytest
+        run: uv run --no-sync pytest -q

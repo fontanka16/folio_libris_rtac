@@ -1,0 +1,19 @@
+name: tests
+
+# Anropar den delade testkörningen i bibliotekarien-platform. All logik bor där,
+# så en ändring av hur tester körs sker på ett ställe och inte i sju repon.
+# Se bibliotekarien-platform/.github/README.md.
+#
+# folio_libris_rtac har pyproject.toml och uv.lock i roten, så ingen
+# working-directory behöver anges.
+
+on:
+  pull_request:
+  # Inte redundant mot pull_request: merge-resultatet kan skilja sig från
+  # PR-huvudet, och det är merge-resultatet som deployas.
+  push:
+    branches: [main]
+
+jobs:
+  tests:
+    uses: Bibliotekarien/bibliotekarien-platform/.github/workflows/python-tests.yml@main
